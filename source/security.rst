@@ -681,32 +681,42 @@ Sudoedit безопаснее прямого запуска текстового
 Как включить и безопасно настроить сервер SSH?
 ==================================================
 
-Сначала необходимо активировать sshd:
+Сначала установим и активируем sshd:
 
 .. code-block:: text
 
-    sudo systemctl enable sshd.service
+    sudo dnf install openssh-server
+    sudo systemctl enable --now sshd.service
 
-Теперь следует открыть конфиг ``/etc/ssh/sshd_config`` в любом текстовом редакторе и внести правки:
+Создадим собственный файл конфигурации, в который будем вносить изменения:
 
 .. code-block:: text
 
-    sudoedit /etc/ssh/sshd_config
+    sudo touch /etc/ssh/sshd_config.d/00-foobar.conf
+    sudo chmod 0600 /etc/ssh/sshd_config.d/00-foobar.conf
 
-Отключение входа суперпользователем:
+Имя файла начинается с **00**, т.к., согласно документации OpenSSH, приоритет среди всех файлов конфигурации имеет та директива, которая была указана раньше.
+
+Отредактируем созданный файл для внесения своих изменений:
+
+.. code-block:: text
+
+    sudoedit /etc/ssh/sshd_config.d/00-foobar.conf
+
+Отключим вход суперпользователем:
 
 .. code-block:: text
 
     PermitRootLogin no
 
-Запрет входа по паролям (будет доступна лишь аутентификация по ключам):
+Запретим вход по паролям (будет доступна лишь аутентификация по ключам):
 
 .. code-block:: text
 
     PasswordAuthentication no
     PermitEmptyPasswords no
 
-Перезапуск sshd для применения изменений:
+Сохраним изменения и перезапустим sshd:
 
 .. code-block:: text
 
@@ -808,7 +818,20 @@ Sudoedit безопаснее прямого запуска текстового
 
     sudo groupadd sftp
 
-Откроем конфиг ``/etc/ssh/sshd_config`` в текстовом редакторе и в самом конце добавим:
+Создадим собственный файл конфигурации, в который будем вносить изменения:
+
+.. code-block:: text
+
+    sudo touch /etc/ssh/sshd_config.d/01-sftp.conf
+    sudo chmod 0600 /etc/ssh/sshd_config.d/01-sftp.conf
+
+Откроем конфиг ``/etc/ssh/sshd_config.d/01-sftp.conf`` в текстовом редакторе:
+
+.. code-block:: text
+
+    sudoedit /etc/ssh/sshd_config.d/01-sftp.conf
+
+Добавим следующие строки:
 
 .. code-block:: text
 
@@ -818,7 +841,7 @@ Sudoedit безопаснее прямого запуска текстового
         AllowTCPForwarding no
         ForceCommand internal-sftp
 
-Перезапустим sshd для применения изменений:
+Сохраним изменения и перезапустим sshd:
 
 .. code-block:: text
 
@@ -1882,3 +1905,65 @@ Cryptsetup поддерживает монтирование как :ref:`TrueCr
 .. code-block:: text
 
     ssh example
+
+.. index:: luks, encryption, cryptsetup
+.. _luks-version:
+
+Как определить версию LUKS конкретного криптоконтейнера?
+============================================================
+
+Версия LUKS всегда указана в разделе **Version** :ref:`информации о шифровании <luks-info>`.
+
+.. index:: luks, encryption, cryptsetup
+.. _luks-upgrade:
+
+Можно ли изменить используемую криптоконтейнером версию LUKS?
+================================================================
+
+Нет. Для изменения :ref:`версии <luks-version>` с LUKS1 на LUKS2 требуется пересоздать криптоконтейнер.
+
+.. index:: luks, encryption, trim, cryptsetup
+.. _luks-trim-open:
+
+Как активировать TRIM для открытых вручную LUKS-контейнеров?
+================================================================
+
+Зашифрованные :ref:`LUKS-контейнеры <luks-container-create>`, открытые вручную при помощи ``cryptsetup open``, по умолчанию не будут поддерживать :ref:`процедуру TRIM <ssd-trim>`, поэтому рассмотрим несколько способов исправить это.
+
+**Способ 1.** Передадим :ref:`параметр ядра <kernelpm-perm>` Linux ``rd.luks.options=discard``.
+
+Теперь все контейнеры, открытые утилитой, будут поддерживать TRIM. Однако действие не распространяется на указанные в файле ``/etc/crypttab``, т.к. он имеет более высокий приоритет.
+
+**Способ 2.** Воспользуемся параметром командной строки ``--allow-discards``.
+
+LUKS :ref:`версии 2 <luks-version>` поддерживает возможность принудительно задать использование процедуры TRIM внутри контейнера при любых операциях монтирования. В LUKS1 это не реализовано и поэтому работать не будет.
+
+Для LUKS1 (вводится при каждом открытии тома):
+
+.. code-block:: text
+
+    sudo cryptsetup --allow-discards open /path/to/container foo-bar
+
+Для LUKS2 (вводится только один раз):
+
+.. code-block:: text
+
+    sudo cryptsetup --allow-discards --persistent open /path/to/container foo-bar
+
+Убедимся, что в :ref:`информации о шифровании <luks-info>`, в разделе **Flags**, появился **allow-discards**.
+
+.. index:: luks, encryption, trim, cryptsetup
+.. _luks-trim-execute:
+
+Как выполнить TRIM для открытых вручную LUKS-контейнеров?
+==============================================================
+
+Функция автоматической очистки неиспользуемые данных TRIM выполняется либо в :ref:`реальном времени <ssd-trim>`, либо :ref:`по таймеру <ssd-timer>`, но только для автоматически смонтированных и указанных в файле ``/etc/crypttab`` разделов.
+
+Для зашифрованных :ref:`LUKS-контейнеров <luks-container-create>`, открытых вручную при помощи ``cryptsetup open``, её необходимо сначала :ref:`активировать <luks-trim-open>`, а затем периодически запускать утилиту ``fstrim``:
+
+.. code-block:: text
+
+    sudo fstrim -v /media/foo-bar
+
+Здесь **/media/foo-bar** -- это точка монтирования.
